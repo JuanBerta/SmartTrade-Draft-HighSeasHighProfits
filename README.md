@@ -30,6 +30,15 @@ Smart Trade Desired Buy Profit %: The minimum margin required before a convoy wi
 
 Smart Trade Desired Sell Profit %: The minimum margin required before a convoy will sell its current cargo.
 
+## Instructions in game:
+1- Select "Smart Trade Desired Buy Profit %" (recommended 10%)
+
+2- Select "Smart Trade Desired Sell Profit %" (recommended to 0% if using a buy profit of 10%)
+
+3- In the auto trade route menu, in "World Map", select each city that you want to trade (Buying/Selling quick action will be made automatically)
+
+4- Activate auto trade route as a vanilla one
+
 ## 🏗 Developer Notes & Forking
 This mod is a draft implementation using Harmony for runtime patching.
 
