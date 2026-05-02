@@ -91,6 +91,33 @@ namespace SmartTradeDraft
             }
         }
 
+
+
+        [HarmonyPatch(typeof(EventBus), "FireNow")]
+        public static class SmartTrade_SeasonChangedPatch
+        {
+            public static void Postfix(object obj)
+            {
+                // Only trigger when the season transitions
+                if (obj == null || obj.GetType().Name != "OnSeasonChanged") return;
+
+                var gameState = InstanceProvider.GetInstance<GameState>();
+                var playerTrader = gameState?.human; // Using your 'human' fix
+
+                if (playerTrader == null || playerTrader.ships == null) return;
+
+                MelonLoader.MelonLogger.Msg("[SmartTrade] Season Changed: Syncing fleet strategy with new market conditions.");
+
+                foreach (var ship in playerTrader.ships)
+                {
+                    if (ship?.convoy?.tradeRoute != null && ship.convoy.tradeRoute.active)
+                    {
+                        RecalculateTradeRoute(ship);
+                    }
+                }
+            }
+        }
+
         public static void RecalculateTradeRoute(Ship ship)
         {
             var gameState = InstanceProvider.GetInstance<GameState>();
@@ -99,253 +126,125 @@ namespace SmartTradeDraft
             if (gameState == null || priceCalc == null || ship?.convoy?.tradeRoute == null) return;
 
             var convoy = ship.convoy;
-            if (convoy?.tradeRoute == null)
-                return;
-
             var tradeRoute = convoy.tradeRoute;
             var routeCities = tradeRoute.tradeSheets
-            .Select(s => gameState.cities[s.cityId])
-            .ToList();
+                .Select(s => gameState.cities[s.cityId])
+                .ToList();
 
             for (int i = 0; i < tradeRoute.tradeSheets.Count; i++)
             {
                 var currentSheet = tradeRoute.tradeSheets[i];
                 var currentCity = gameState.cities[currentSheet.cityId];
-
-
                 var futureCities = routeCities.Skip(i + 1).ToList();
                 bool isLastCity = futureCities.Count == 0;
 
-                // Ensure goods exist in THIS sheet
                 foreach (string good in Goods.ALL)
                 {
                     var existingGoods = new HashSet<string>(currentSheet.actions.Select(a => a.good));
                     if (!existingGoods.Contains(good))
                     {
-                        currentSheet.actions.Add(new TradeAction
-                        {
-                            good = good,
-                            type = 0,
-                            active = false
-                        });
+                        currentSheet.actions.Add(new TradeAction { good = good, type = 0, active = false });
                     }
                 }
 
-                var candidates = new List<(string good, int type, float score, int price)>();
-
+                var candidates = new List<(string good, int type, float score, int price, int tradeDepth)>();
                 CargoHolder cargoSource = (CargoHolder)convoy;
 
+                foreach (var action in currentSheet.actions) { action.active = false; }
 
-                // 🔥 Clear previous auto decisions (important)
-                foreach (var action in currentSheet.actions)
+                // --- SELL LOGIC ---
+                // We iterate through all goods to ensure the TradeSheet is always populated 
+                // with instructions, allowing the ship to sell goods it might acquire later.
+                foreach (string good in Goods.ALL)
                 {
-                    action.active = false;
-                }
-                
-                // --- SELL (REAL + PREDICTED) ---
+                    // Try to find the actual stack in cargo
+                    var cargoStack = cargoSource.GetGoods().FirstOrDefault(g => g.type == good);
 
-                bool hasCargo = cargoSource.GetGoods().Any(g => g.amount > 0.1f);
+                    // Use the actual stack if it exists, otherwise create a virtual EMPTY one 
+                    // using the Core Price as the theoretical average cost.
+                    ItemStack stack = cargoStack ?? new ItemStack(good, 0f, gameState.corePrices[good]);
 
-                if (hasCargo)
-                {
-                    // ✅ REAL SELL (existing logic)
-                    // ✅ REAL SELL (Updated with Production check)
-                    foreach (var stack in cargoSource.GetGoods())
-                    {
-                        if (stack.amount <= 0.1f) continue;
+                    // 1. Production/Consumption Check: Focus on Net Importers
+                    var prodDict = Production.GetCityProduction(currentCity);
+                    float lProd = prodDict.ContainsKey(good) ? prodDict[good].amount : 0f;
+                    float lCons = Consumption.GetConsumption(currentCity, good);
 
-                        string good = stack.type;
-                        var productionDict = Production.GetCityProduction(currentCity);
+                    if (lCons <= lProd) continue;
 
-                        // Check if the city produces this good
-                        bool isNotProducedLocally = !productionDict.ContainsKey(good) || productionDict[good].amount <= 0f;
+                    // 2. Market Depth: Use stack.averageCost (real or core baseline)
+                    float costToBeat = stack.averageCost > 0 ? stack.averageCost : gameState.corePrices[good];
+                    int profitableQty = PriceCalculator.CountGoodsBoughtByCityAbovePrice(good, currentCity, gameState, (int)costToBeat);
 
-                        float realCost = stack.averageCost > 0 ? stack.averageCost : gameState.corePrices[good];
-                        int sellTotal = priceCalc.CityBuysGoods(good, currentCity, 10);
-                        if (sellTotal <= 0) continue;
+                    if (profitableQty <= 0) continue;
 
-                        float sellPrice = (float)sellTotal / 10;
-                        float profit = sellPrice - realCost;
-                        float minProfit = SmartTradeSettings.GetSellProfit();
+                    // 3. Sample Size for Price: Use actual amount if available, otherwise 10 units for a quote
+                    int sampleSize = (stack.amount > 1f) ? Mathf.Min(profitableQty, (int)stack.amount) : Mathf.Min(profitableQty, 10);
+                    int sellTotal = priceCalc.CityBuysGoods(good, currentCity, sampleSize);
+                    float sellPrice = (float)sellTotal / sampleSize;
 
-                        // Even if profit is low, if they don't produce it, we might still want to dump it
-                        // to free up cargo space, but let's stick to your profit requirement for now:
-                        if (profit - (realCost * minProfit) <= 0 && !isNotProducedLocally)
-                            continue;
+                    // 4. Scoring
+                    float score = CalculateTradeScore(good, currentCity, futureCities, gameState, priceCalc);
 
-                        float pressure = GetMarketPressure(currentCity, good);
-                        float inventoryFactor = Mathf.Clamp(stack.amount / 50f, 1f, 3f);
+                    // If the ship doesn't actually have the items, reduce score priority 
+                    // so it doesn't block "Buy" opportunities, but remains active in the sheet.
+                    if (stack.amount <= 0.1f) score *= 0.1f;
 
-                        // 🔥 NEW: Add a multiplier if not produced locally
-                        float productionMultiplier = isNotProducedLocally ? 1.5f : 1.0f;
-
-                        float score = profit * stack.amount * inventoryFactor * (1f + Mathf.Max(0, pressure)) * productionMultiplier;
-
-                        int targetSellPrice = Mathf.RoundToInt(sellPrice * (1f + minProfit));
-                        candidates.Add((good, TradeAction.SELL, score, targetSellPrice));
-                    }
-                }
-                else
-                {
-                    foreach (string good in Goods.ALL)
-                    {
-                        float bestProfit = 0f;
-                        float bestBuyPrice = 0f;
-
-                        if (!isLastCity)
-                        {
-                            // NORMAL (existing logic)
-                            foreach (var futureCity in futureCities)
-                            {
-                                int buyTotal = priceCalc.CitySellsGoods(good, currentCity, 10);
-                                int sellTotal = priceCalc.CityBuysGoods(good, futureCity, 10);
-
-                                if (buyTotal <= 0 || sellTotal <= 0)
-                                    continue;
-
-                                float buyPrice = (float)buyTotal / 10;
-                                float sellPrice = (float)sellTotal / 10;
-
-                                float profit = sellPrice - buyPrice;
-
-                                if (profit > bestProfit)
-                                {
-                                    bestProfit = profit;
-                                    bestBuyPrice = buyPrice;
-                                }
-                            }
-                        }
-                        else
-                        {
-                            // 🔥 LAST CITY LOGIC (NEW)
-                            int sellTotal = priceCalc.CityBuysGoods(good, currentCity, 10);
-                            if (sellTotal <= 0)
-                                continue;
-
-                            float sellPrice = (float)sellTotal / 10;
-
-                            float basePrice = gameState.corePrices[good];
-
-                            bestProfit = sellPrice - basePrice;
-                            bestBuyPrice = basePrice;
-                        }
-
-                        float minProfit = SmartTradeSettings.GetSellProfit();
-
-                        // Check production at the target destination (if isLastCity, it's currentCity)
-                        var targetCity = isLastCity ? currentCity : futureCities.First(); // Simplification
-                        var targetProd = Production.GetCityProduction(targetCity);
-                        bool isNotProducedAtTarget = !targetProd.ContainsKey(good) || targetProd[good].amount <= 0f;
-
-                        if (bestProfit <= bestBuyPrice * minProfit && !isNotProducedAtTarget)
-                            continue;
-
-                        float pressure = GetMarketPressure(currentCity, good);
-
-                        // 🔥 NEW: Boost the score for goods that are in high demand (not produced)
-                        float productionMultiplier = isNotProducedAtTarget ? 1.3f : 1.0f;
-                        float score = bestProfit * (1f + Mathf.Max(0, pressure)) * productionMultiplier;
-
-                        int targetSellPrice = Mathf.RoundToInt((bestBuyPrice + bestProfit) * (1f + minProfit));
-                        candidates.Add((good, TradeAction.SELL, score, targetSellPrice));
-                    }
+                    candidates.Add((good, 2, score, Mathf.RoundToInt(sellPrice), profitableQty));
                 }
 
-                // --- BUY ---
+                // --- BUY LOGIC ---
                 foreach (string goodName in Goods.ALL)
                 {
-                    var productionDict = Production.GetCityProduction(currentCity);
+                    var prodDict = Production.GetCityProduction(currentCity);
+                    float lProd = prodDict.ContainsKey(goodName) ? prodDict[goodName].amount : 0f;
+                    float lCons = Consumption.GetConsumption(currentCity, goodName);
 
-                    // 🚫 Skip goods that are not produced
-                    if (!productionDict.ContainsKey(goodName) || productionDict[goodName].amount <= 0f)
-                        continue;
+                    if (lProd <= lCons) continue;
 
-                    float score = CalculateTradeScore(
-                        goodName,
-                        currentCity,
-                        futureCities,
-                        gameState,
-                        priceCalc);
-
-                    if (score <= 0)
-                        continue;
-
+                    // How many items are "cheap" enough to buy?
                     float buyMargin = Mathf.Clamp01(SmartTradeSettings.GetBuyProfit());
+                    int maxBuyPrice = Mathf.RoundToInt(gameState.corePrices[goodName] * (1f - buyMargin));
 
-                    int targetBuyPrice = Mathf.RoundToInt(
-                        gameState.corePrices[goodName] * (1f - buyMargin)
-                    );
+                    int availableCheapStock = PriceCalculator.CountGoodsSoldByCityBelowPrice(goodName, currentCity, gameState, maxBuyPrice);
+                    if (availableCheapStock <= 0) continue;
 
-                    candidates.Add((
-                        goodName,
-                        TradeAction.BUY,
-                        score,
-                        targetBuyPrice
-                    ));
+                    float score = CalculateTradeScore(goodName, currentCity, futureCities, gameState, priceCalc);
+                    if (score <= 0) continue;
+
+                    candidates.Add((goodName, 1, score, maxBuyPrice, availableCheapStock));
                 }
 
-                if (candidates.Count == 0)
-                {
-                    // Fix 1: Changed 'i' to 'j' to avoid conflict with the outer loop
-                    for (int j = 0; j < tradeRoute.tradeSheets.Count; j++)
-                    {
-                        // Fix 2: Added 'var' or type to ensure currentSheet is locally defined if needed
-                        var targetSheet = tradeRoute.tradeSheets[j];
-
-                        if (targetSheet.actions.Count < Goods.ALL.Count)
-                        {
-                            InitializeTradeSheet(targetSheet);
-                        }
-
-                        // Fix 3: You need to iterate through goods here to use 'good'
-                        foreach (string goodKey in Goods.ALL)
-                        {
-                            int sellTotal = priceCalc.CityBuysGoods(goodKey, currentCity, 10);
-                            if (sellTotal <= 0)
-                                continue;
-
-                            float sellPrice = (float)sellTotal / 10;
-
-                            candidates.Add((
-                                goodKey,
-                                TradeAction.SELL,
-                                0.01f, // very low priority
-                                Mathf.RoundToInt(sellPrice)
-                            ));
-                        }
-                    }
-                }
-
-                // --- Apply best ---
-                var bestPerGood = candidates
-                    .GroupBy(c => c.good)
-                    .Select(g =>
-                    {
-                        var best = g.OrderByDescending(x => x.score).First();
-
-                        var sell = g.FirstOrDefault(x => x.type == TradeAction.SELL);
-                        if (sell.good != null && sell.score > best.score * 0.8f)
-                            return sell;
-
-                        return best;
-                    })
+                // --- APPLY BEST ACTIONS ---
+                var bestPerGood = candidates.GroupBy(c => c.good)
+                    .Select(g => g.OrderByDescending(x => x.score).First())
                     .ToList();
 
                 foreach (var c in bestPerGood)
                 {
-                    var action = currentSheet.actions.First(a => a.good == c.good);
+                    var actionObject = currentSheet.actions.FirstOrDefault(a => a.good == c.good);
+                    if (actionObject == null) continue;
 
-                    action.type = c.type;
-                    action.priceAmount = c.price;
-                    action.active = true;
+                    actionObject.type = c.type;
+                    actionObject.priceAmount = c.price;
+                    actionObject.active = true;
 
-                    // Register globally (needed for UI)
-                    if (!tradeRoute.tradedGoods.Contains(c.good))
+                    if (c.type == 2) // SELL
                     {
-                        tradeRoute.tradedGoods.Add(c.good);
+                        // Sell until city stock reaches a level where they won't pay our price anymore
+                        actionObject.limitKeep = 0;
+                    }
+                    else // BUY
+                    {
+                        // Set the city stock limit. If city has 100 and we want to buy 20 cheap ones, 
+                        // we set limit to 80 so the ship buys until 80 are left.
+                        float currentCityAmount = currentCity.goods[c.good].amount;
+                        actionObject.limitKeep = Mathf.Max(0, Mathf.RoundToInt(currentCityAmount - c.tradeDepth));
                     }
 
-                    MelonLogger.Msg($"[SmartTrade] {currentCity.name}: {c.type} {c.good}");
+                    if (!tradeRoute.tradedGoods.Contains(c.good)) tradeRoute.tradedGoods.Add(c.good);
+
+                    string tName = c.type == 1 ? "BUY" : "SELL";
+                    MelonLoader.MelonLogger.Msg($"[SmartTrade] {currentCity.name}: {tName} {c.good} @ {c.price} (Depth: {c.tradeDepth})");
                 }
             }
         }
