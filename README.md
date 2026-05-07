@@ -15,7 +15,7 @@ Smart Throttling: Efficiently recalculates routes only when cargo changes, savin
 ## 🛠 Installation
 1- Ensure MelonLoader is installed for High Seas, High Profits.
 
-2- Download the Smart Trade.dll.
+2- Download the Smart Trade.dll from here: [Download](https://lexydotzip.itch.io/hshp-smart-trade).
 
 3- Place the file into your game's Mods folder.
 
@@ -33,7 +33,7 @@ Smart Trade Desired Sell Profit %: The minimum margin required before a convoy w
 ## Instructions in game:
 1- Select "Smart Trade Desired Buy Profit %" (recommended 10%)
 
-2- Select "Smart Trade Desired Sell Profit %" (recommended to 0% if using a buy profit of 10%)
+2- Select "Smart Trade Desired Sell Profit %" (recommended between 0% to 10% if using a buy profit of 10%)
 
 3- In the auto trade route menu, in "World Map", select each city that you want to trade (Buying/Selling quick action will be made automatically)
 
