@@ -57,5 +57,56 @@ namespace Smart_Trade.Ensure_Dropdown
                 Smart_Trade.Send_Melon_Logger_Message.Send_Melon_Logger_Message.SendMelonLoggerMessage($"{_labelText} updated to: {selectedValue}%");
             });
         }
+
+        /// <summary>
+        /// Generic dropdown injection for GeneralSettingsWindow.
+        /// The selected INDEX is stored in PlayerPrefs under _prefKey (int).
+        /// </summary>
+        public static void EnsureOptionsDropdown(GeneralSettingsWindow __instance,
+                Transform _parent,
+                Transform _template,
+                string _name,
+                string _labelText,
+                string _prefKey,
+                List<string> options,
+                int defaultValue)
+        {
+            // Check if it already exists so we don't duplicate on every 'Show'
+            Transform existing = _parent.Find(_name);
+            if (existing != null) return;
+
+            // 1. Clone the row
+            GameObject row = UnityEngine.Object.Instantiate(_template.gameObject, _parent);
+            row.name = _name;
+
+            // 2. Setup the Label
+            TMPro.TextMeshProUGUI label = row.transform.Find("label").GetComponent<TMPro.TextMeshProUGUI>();
+            label.text = _labelText;
+
+            // 3. Setup the Dropdown
+            TMPro.TMP_Dropdown dropdown = row.transform.Find("dropdown").GetComponent<TMPro.TMP_Dropdown>();
+
+            // Clear the original 'ChangeLanguage' listeners
+            dropdown.onValueChanged = new TMPro.TMP_Dropdown.DropdownEvent();
+            dropdown.options.Clear();
+
+            // 4. Fill Options
+            foreach (string opt in options)
+            {
+                dropdown.options.Add(new TMPro.TMP_Dropdown.OptionData { text = opt });
+            }
+
+            // 5. Load Saved Value (clamped to valid range)
+            int currentSaved = PlayerPrefs.GetInt(_prefKey, defaultValue);
+            int index = Mathf.Clamp(currentSaved, 0, options.Count - 1);
+            dropdown.SetValueWithoutNotify(index);
+
+            // 6. Save Logic
+            dropdown.onValueChanged.AddListener((int val) =>
+            {
+                PlayerPrefs.SetInt(_prefKey, val);
+                Smart_Trade.Send_Melon_Logger_Message.Send_Melon_Logger_Message.SendMelonLoggerMessage($"{_labelText} set to: {options[val]}");
+            });
+        }
     }
 }

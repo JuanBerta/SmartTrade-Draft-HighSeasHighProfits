@@ -52,6 +52,7 @@ namespace SmartTradeDraft
         {
             public static void Postfix(AutoTradeRoutesWindow __instance, OnCityAddedToTradeRoute evt)
             {
+                if (!SmartTradeSettings.IsEnabled()) return;
                 MelonLogger.Msg("[SmartTrade] Patch HIT");
                 var gameState = Get_Class.GetGameState();
                 var priceCalc = Get_Class.GetPriceCalculator();
@@ -80,6 +81,7 @@ namespace SmartTradeDraft
 
             public static void Postfix(object obj)
             {
+                if (!SmartTradeSettings.IsEnabled()) return;
                 // Only act if the event is a cargo change
                 if (!(obj is OnShipCargoChanged cargoEvt) || _shipEventField == null) return;
 
@@ -97,6 +99,7 @@ namespace SmartTradeDraft
         {
             public static void Postfix(object obj)
             {
+                if (!SmartTradeSettings.IsEnabled()) return;
                 // Only trigger when the season transitions
                 if (obj == null || obj.GetType().Name != "OnSeasonChanged") return;
 
@@ -127,6 +130,12 @@ namespace SmartTradeDraft
                 Ensure_Dropdown.EnsureDropdown(__instance, _windowTransform, _languageTrasnform,
                     "smarttrade_buy_setting", "Smart Trade Desired Buy Profit %",
                     "smarttrade.profitMargin");
+
+                // Create Enable/Disable Dropdown
+                Ensure_Dropdown.EnsureOptionsDropdown(__instance, _windowTransform, _languageTrasnform,
+                    "smarttrade_enable_setting", "Smart Trade Mod",
+                    SmartTradeSettings.ENABLED_KEY,
+                    new List<string> { "Enabled", "Disabled" }, 0);
             }
         }
 
