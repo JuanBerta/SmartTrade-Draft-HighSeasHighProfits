@@ -14,7 +14,7 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyCopyright("Copyright ©  2026")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
-[assembly: MelonInfo(typeof(SmartTradeDraftMod), "Smart Trade", "1.0.4", "Beinded")]
+[assembly: MelonInfo(typeof(SmartTradeDraftMod), "Smart Trade", "1.0.5", "Beinded")]
 
 
 // Setting ComVisible to false makes the types in this assembly not visible
