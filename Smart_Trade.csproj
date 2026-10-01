@@ -76,6 +76,7 @@
     <Compile Include="Ensure_Dropdown.cs" />
     <Compile Include="Get_Class.cs" />
     <Compile Include="Initialize_Trade_Sheet.cs" />
+    <Compile Include="Load_Unload_Logic.cs" />
     <Compile Include="Process_Route_Sheets.cs" />
     <Compile Include="Recalculate_Trade_Route.cs" />
     <Compile Include="Sell_Logic.cs" />

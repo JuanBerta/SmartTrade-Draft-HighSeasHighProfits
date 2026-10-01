@@ -136,6 +136,14 @@ namespace SmartTradeDraft
                     "smarttrade_enable_setting", "Smart Trade Mod",
                     SmartTradeSettings.ENABLED_KEY,
                     new List<string> { "Enabled", "Disabled" }, 0);
+
+                // Create Load/Unload Margin Dropdown (0%..50% in steps of 5, default index 2 = 10%)
+                List<string> marginOptions = new List<string>();
+                for (int v = 0; v <= 50; v += 5) marginOptions.Add($"{v}%");
+                Ensure_Dropdown.EnsureOptionsDropdown(__instance, _windowTransform, _languageTrasnform,
+                    "smarttrade_margin_setting", "Smart Trade Load Margin %",
+                    SmartTradeSettings.MARGIN_KEY,
+                    marginOptions, 2);
             }
         }
 

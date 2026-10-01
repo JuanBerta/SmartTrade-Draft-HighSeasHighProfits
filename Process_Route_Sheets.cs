@@ -13,6 +13,8 @@ using Smart_Trade.Buy_Logic;
 using Smart_Trade.Add_Actions;
 using Smart_Trade.Disable_Actions;
 using Smart_Trade.Apply_Trade_Actions;
+using Smart_Trade.Load_Unload_Logic;
+using Smart_Trade.Smart_Trade_Settings;
 
 namespace Smart_Trade.Process_Route_Sheets
 {
@@ -40,6 +42,9 @@ namespace Smart_Trade.Process_Route_Sheets
                 Smart_Trade.Disable_Actions.DisableActionsClass.DisableActions(currentSheet);
 
                 // --- STEP 2: GENERATE POSSIBILITIES ---
+                // All action types feed one candidate pool; ApplyTradeActions picks per good
+                // by type priority (game order) first, then by score.
+                Smart_Trade.Load_Unload_Logic.Load_Unload_Logic.LoadUnloadLogic(_gameState, currentCity, _cargoSource, _candidates);
                 Smart_Trade.Sell_Logic.Sell_Logic.SellLogic(_cargoSource, _gameState, currentCity, futureCities, _priceCalc, _candidates);
                 Smart_Trade.Buy_Logic.Buy_Logic.BuyLogic(currentCity, _gameState, futureCities, _priceCalc, _candidates);
 
